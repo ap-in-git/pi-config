@@ -5,8 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   Σ 45.2k · [clock] 1h 23m · $0.123 · $0.456 · $1.234
- *   ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
+ *   [branch] main · [folder] ~/.pi · Σ 45.2k · [speed] 12/s · [clock] 1h 23m
+ *   $0.123 · $0.456 · $1.234 · ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -21,6 +21,9 @@
  *
  * Σ = total tokens used across the whole session (left side, before cost).
  * [clock] = elapsed time since the session started (refreshes every 15s).
+ * [branch] = current git branch (omitted outside a repository).
+ * [folder] = working directory, with the home directory shown as "~".
+ * [speed]  = session throughput in tokens/second.
  *
  * While a turn is running, the working indicator shows a live task timer
  * ("Working · 12s"), updated once a second and reset when the turn ends.
@@ -293,6 +296,7 @@ function contextDisplay(ctx: ExtensionContext): { text: string; level: "error" |
 
 interface Display {
 	sessionTokens: string;
+	sessionTotalTokens: number;
 	costSession: string;
 	costToday: string;
 	cost30d: string;
@@ -446,6 +450,15 @@ function cwdLabel(cwd: string): string {
 	return parts.slice(-2).join("/") || p;
 }
 
+/** Full path with the home directory shortened to "~". */
+function formatCwd(cwd: string): string {
+	if (!cwd) return "unknown";
+	const home = homedir();
+	if (cwd === home) return "~";
+	if (cwd.startsWith(home + "/") || cwd.startsWith(home + "\\")) return "~" + cwd.slice(home.length);
+	return cwd;
+}
+
 /** Render rows as a horizontal bar chart. */
 function barRows(rows: { label: string; cost: number }[]): string[] {
 	if (rows.length === 0) return ["(no usage in range)"];
@@ -475,6 +488,7 @@ export default function (pi: ExtensionAPI) {
 	let sessionStart = 0;
 	let durationTimer: ReturnType<typeof setInterval> | undefined;
 	let taskTimer: ReturnType<typeof setInterval> | undefined;
+	let currentBranch: string | null = null;
 
 	/** Live session cost plus its today/30-day window contributions. */
 	function liveCosts(ctx: ExtensionContext, now: number) {
@@ -546,13 +560,14 @@ export default function (pi: ExtensionAPI) {
 
 		const tokens = liveTokens(ctx);
 		const sessionTokens = `Σ ${formatTokens(tokens.sessionTotal)}`;
+		const sessionTotalTokens = tokens.sessionTotal;
 
 		const peakKind = isDeepseekPeak(now) ? "peak" : "off-peak";
 		const peakText = peakKind === "peak" ? "\u{F1213} peak" : "\u{F0533} off-peak";
 		const model = currentModel;
 		const thinking = currentReasoning ? `\u{F09D1} ${currentThinking}` : "";
 
-		return { sessionTokens, costSession, costToday, cost30d, ctxText: ctxInfo.text, ctxLevel: ctxInfo.level, chText, peakKind, peakText, model, thinking };
+		return { sessionTokens, sessionTotalTokens, costSession, costToday, cost30d, ctxText: ctxInfo.text, ctxLevel: ctxInfo.level, chText, peakKind, peakText, model, thinking };
 	}
 
 	function refresh(ctx: ExtensionContext): void {
@@ -657,6 +672,27 @@ export default function (pi: ExtensionAPI) {
 					lines: [
 						`Elapsed    ${formatElapsed(Date.now() - sessionStart)}`,
 						`Started    ${started.toLocaleString()}`,
+					],
+				};
+			}
+			case "branch":
+				return {
+					title: "Git branch",
+					lines: [`Branch     ${currentBranch ?? "(not a git repository)"}`],
+				};
+			case "cwd":
+				return {
+					title: "Working directory",
+					lines: [`Path       ${ctx.cwd}`, `Shortened  ${formatCwd(ctx.cwd)}`],
+				};
+			case "tps": {
+				const seconds = Math.max(1, (Date.now() - sessionStart) / 1000);
+				return {
+					title: "Throughput",
+					lines: [
+						`Tokens/s   ${(tokens.sessionTotal / seconds).toFixed(1)}`,
+						`Total      ${formatTokens(tokens.sessionTotal)}`,
+						`Elapsed    ${formatElapsed(Date.now() - sessionStart)}`,
 					],
 				};
 			}
@@ -805,16 +841,18 @@ export default function (pi: ExtensionAPI) {
 		if (durationTimer) clearInterval(durationTimer);
 		durationTimer = setInterval(() => activeTui?.requestRender(), 15_000);
 
-		ctx.ui.setFooter((tui, theme) => {
+		ctx.ui.setFooter((tui, theme, footerData) => {
 			activeTui = tui;
 			let cached: Display | undefined;
 			const invalidate = () => {
 				cached = undefined;
 			};
 			invalidateCurrent = invalidate;
+			const unsubscribeBranch = footerData.onBranchChange(() => tui.requestRender());
 
 			return {
 				dispose() {
+					unsubscribeBranch();
 					if (invalidateCurrent === invalidate) invalidateCurrent = null;
 					if (activeTui === tui) activeTui = null;
 				},
@@ -827,6 +865,7 @@ export default function (pi: ExtensionAPI) {
 							// The captured context can become stale across session switches.
 							cached = {
 								sessionTokens: "Σ 0",
+								sessionTotalTokens: 0,
 								costSession: "$0.000",
 								costToday: "…",
 								cost30d: "…",
@@ -850,14 +889,20 @@ export default function (pi: ExtensionAPI) {
 						? theme.fg("warning", cached.peakText)
 						: theme.fg("success", cached.peakText);
 					const elapsed = `${"\u{F0150}"} ${formatElapsed(Date.now() - sessionStart)}`;
+					const branch = footerData.getGitBranch();
+					currentBranch = branch;
+					const tps = cached.sessionTotalTokens / Math.max(1, (Date.now() - sessionStart) / 1000);
 					const row1 = [
+						...(branch ? [{ id: "branch", text: theme.fg("dim", `${"\u{F062C}"} ${branch}`) }] : []),
+						{ id: "cwd", text: theme.fg("dim", `${"\u{F0256}"} ${formatCwd(ctx.cwd)}`) },
 						{ id: "tokens", text: theme.fg("dim", cached.sessionTokens) },
+						{ id: "tps", text: theme.fg("dim", `${"\u{F04C5}"} ${tps.toFixed(1)}/s`) },
 						{ id: "session-time", text: theme.fg("dim", elapsed) },
+					];
+					const row2 = [
 						{ id: "cost-session", text: theme.fg("dim", cached.costSession) },
 						{ id: "cost-today", text: theme.fg("dim", cached.costToday) },
 						{ id: "cost-30d", text: theme.fg("dim", cached.cost30d) },
-					];
-					const row2 = [
 						{ id: "context", text: ctxStyled },
 						{ id: "cache", text: theme.fg("dim", cached.chText) },
 						{ id: "peak", text: peakStyled },
