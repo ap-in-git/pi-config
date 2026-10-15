@@ -5,8 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   [branch] main · [folder] ~/.pi                    Σ 45.2k · [speed] 12/s · [clock] 1h 23m
- *   $0.123 · $0.456 · $1.234     ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
+ *   [branch] main · [folder] ~/.pi                                    model · [brain] effort
+ *   Σ 45.2k · [speed] 12/s · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%     $0.123 · $0.456 · $1.234 · [chart] peak
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -894,29 +894,28 @@ export default function (pi: ExtensionAPI) {
 					const tps = cached.sessionTotalTokens / Math.max(1, (Date.now() - sessionStart) / 1000);
 					const dim = (text: string) => theme.fg("dim", text);
 
-					// Line 1: where you are (left) · session activity (right).
+					// Line 1 — identity: project (left) · model (right).
 					const r1Left = [
 						...(branch ? [{ id: "branch", text: dim(`${"\u{F062C}"} ${branch}`) }] : []),
 						{ id: "cwd", text: dim(`${"\u{F0256}"} ${formatCwd(ctx.cwd)}`) },
 					];
-					const r1Right = [
+					const r1Right = [{ id: "model", text: dim(cached.model) }];
+					if (cached.thinking) r1Right.push({ id: "thinking", text: dim(cached.thinking) });
+
+					// Line 2 — token/window metrics (left) · money + pricing (right).
+					const r2Left = [
 						{ id: "tokens", text: dim(cached.sessionTokens) },
 						{ id: "tps", text: dim(`${"\u{F04C5}"} ${tps.toFixed(1)}/s`) },
 						{ id: "session-time", text: dim(elapsed) },
+						{ id: "context", text: ctxStyled },
+						{ id: "cache", text: dim(cached.chText) },
 					];
-					// Line 2: cost (left) · live status (right).
-					const r2Left = [
+					const r2Right = [
 						{ id: "cost-session", text: dim(cached.costSession) },
 						{ id: "cost-today", text: dim(cached.costToday) },
 						{ id: "cost-30d", text: dim(cached.cost30d) },
-					];
-					const r2Right = [
-						{ id: "context", text: ctxStyled },
-						{ id: "cache", text: dim(cached.chText) },
 						{ id: "peak", text: peakStyled },
-						{ id: "model", text: dim(cached.model) },
 					];
-					if (cached.thinking) r2Right.push({ id: "thinking", text: dim(cached.thinking) });
 
 					const lines: string[] = [];
 					const ranges: HitSegment[] = [];
