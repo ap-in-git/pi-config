@@ -148,6 +148,12 @@ export function extractTodoItems(message: string): TodoItem[] {
 	return items;
 }
 
+export function extractPlanSection(message: string): string {
+	const headerMatch = message.match(/\*{0,2}Plan:\*{0,2}\s*\n/i);
+	if (!headerMatch) return "";
+	return message.slice(message.indexOf(headerMatch[0])).trim();
+}
+
 export function extractDoneSteps(message: string): number[] {
 	const steps: number[] = [];
 	for (const match of message.matchAll(/\[DONE:(\d+)\]/gi)) {

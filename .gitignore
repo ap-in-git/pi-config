@@ -3,6 +3,7 @@ agent/auth.json
 
 # Runtime data / large, machine-specific
 agent/sessions/
+agent/plans/
 agent/install/
 agent/bin/
 

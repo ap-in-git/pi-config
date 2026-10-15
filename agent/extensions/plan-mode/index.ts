@@ -15,11 +15,14 @@
  * Also: Ctrl+Alt+P toggles plan mode, and `--plan` starts pi in plan mode.
  */
 
+import { mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key } from "@earendil-works/pi-tui";
-import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
+import { extractPlanSection, extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
 
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls"];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
@@ -29,6 +32,7 @@ const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_T
 interface PlanModeState {
 	enabled: boolean;
 	todos?: TodoItem[];
+	planText?: string;
 	executing?: boolean;
 	toolsBeforePlanMode?: string[];
 }
@@ -48,7 +52,36 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
+	let planText = "";
 	let toolsBeforePlanMode: string[] | undefined;
+
+	const PLANS_ROOT = join(homedir(), ".pi", "agent", "plans");
+
+	function planFilePath(ctx: ExtensionContext): string {
+		return join(PLANS_ROOT, ctx.sessionManager.getSessionId(), "plan.md");
+	}
+
+	async function writePlanFile(ctx: ExtensionContext): Promise<void> {
+		const dir = join(PLANS_ROOT, ctx.sessionManager.getSessionId());
+		const body = [
+			"# Plan",
+			"",
+			`_Session ${ctx.sessionManager.getSessionId()} · updated ${new Date().toISOString()}_`,
+			"",
+		];
+		if (todoItems.length > 0) {
+			body.push("## Steps", "");
+			for (const item of todoItems) {
+				body.push(`- [${item.completed ? "x" : " "}] ${item.step}. ${item.text}`);
+			}
+			body.push("");
+		}
+		if (planText.trim()) {
+			body.push("## Plan", "", planText.trim(), "");
+		}
+		await mkdir(dir, { recursive: true });
+		await writeFile(planFilePath(ctx), body.join("\n"), "utf8");
+	}
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -110,6 +143,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		pi.appendEntry("plan-mode", {
 			enabled: planModeEnabled,
 			todos: todoItems,
+			planText,
 			executing: executionMode,
 			toolsBeforePlanMode,
 		});
@@ -145,6 +179,13 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 			const list = todoItems.map((item, i) => `${i + 1}. ${item.completed ? "✓" : "○"} ${item.text}`).join("\n");
 			ctx.ui.notify(`Plan Progress:\n${list}`, "info");
+		},
+	});
+
+	pi.registerCommand("planfile", {
+		description: "Show this session's plan.md path",
+		handler: async (_args, ctx) => {
+			ctx.ui.notify(`Plan file: ${planFilePath(ctx)}`, "info");
 		},
 	});
 
@@ -188,7 +229,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	// Inject the plan / execution instructions before a user prompt.
-	pi.on("before_agent_start", async (event) => {
+	pi.on("before_agent_start", async (event, ctx) => {
 		if (event.messageType !== "user") return;
 
 		if (planModeEnabled) {
@@ -227,7 +268,8 @@ Describe exactly what you would change and why. Do not attempt to make changes.`
 Remaining steps:
 ${todoList}
 
-Execute each step in order. After completing a step, include a [DONE:n] tag in your response.`,
+Execute each step in order. After completing a step, include a [DONE:n] tag in your response.
+The plan is saved at ${planFilePath(ctx)} (maintained by the plan extension).`,
 					display: false,
 				},
 			};
@@ -243,6 +285,7 @@ Execute each step in order. After completing a step, include a [DONE:n] tag in y
 			updateStatus(ctx);
 		}
 		persistState();
+		await writePlanFile(ctx);
 	});
 
 	// After a plan turn, offer to execute it.
@@ -254,6 +297,7 @@ Execute each step in order. After completing a step, include a [DONE:n] tag in y
 					{ customType: "plan-complete", content: `**Plan Complete!** ✓\n\n${completedList}`, display: true },
 					{ triggerTurn: false },
 				);
+				await writePlanFile(ctx);
 				executionMode = false;
 				todoItems = [];
 				updateStatus(ctx);
@@ -262,17 +306,22 @@ Execute each step in order. After completing a step, include a [DONE:n] tag in y
 			return;
 		}
 
-		if (!planModeEnabled || !ctx.hasUI) return;
+		if (!planModeEnabled) return;
 
 		const lastAssistant = [...event.messages].reverse().find(isAssistantMessage);
 		if (lastAssistant) {
-			const extracted = extractTodoItems(getTextContent(lastAssistant));
+			const text = getTextContent(lastAssistant);
+			const extracted = extractTodoItems(text);
 			if (extracted.length > 0) {
 				todoItems = extracted;
+				const section = extractPlanSection(text);
+				if (section) planText = section;
 			}
 		}
 		if (todoItems.length === 0) return;
 		persistState();
+		await writePlanFile(ctx);
+		if (!ctx.hasUI) return;
 
 		const todoListText = todoItems.map((t, i) => `${i + 1}. ☐ ${t.text}`).join("\n");
 		const planTodoListMessage = {
@@ -333,6 +382,7 @@ After completing a step, include a [DONE:n] tag in your response.`;
 		if (planModeEntry?.data) {
 			planModeEnabled = planModeEntry.data.enabled ?? planModeEnabled;
 			todoItems = planModeEntry.data.todos ?? todoItems;
+			planText = planModeEntry.data.planText ?? planText;
 			executionMode = planModeEntry.data.executing ?? executionMode;
 			toolsBeforePlanMode = planModeEntry.data.toolsBeforePlanMode ?? toolsBeforePlanMode;
 		}
@@ -362,5 +412,6 @@ After completing a step, include a [DONE:n] tag in your response.`;
 			enablePlanModeTools();
 		}
 		updateStatus(ctx);
+		await writePlanFile(ctx);
 	});
 }
