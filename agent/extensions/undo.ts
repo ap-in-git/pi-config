@@ -15,6 +15,11 @@
  *
  * Snapshots live in memory for the current process; they are not written to the
  * session file.
+ *
+ * Persistence: pi derives the session's leaf from the last entry in the session
+ * file (branch()/resetLeaf() only change it in memory), so a display-less "undo"
+ * entry is appended after navigating to anchor the leaf at the parent. Without
+ * it the undone turn would reappear when the session is reopened.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -36,6 +41,9 @@ interface FileOp {
 export default function (pi: ExtensionAPI) {
 	/** Pre-edit contents keyed by tool-call id. */
 	const snapshots = new Map<string, Snapshot>();
+
+	// The leaf anchor appended after /undo is display-less.
+	pi.registerEntryRenderer("undo", () => undefined);
 
 	// Record the file's contents immediately before the agent edits or writes it.
 	pi.on("tool_call", (event, ctx) => {
@@ -123,8 +131,9 @@ export default function (pi: ExtensionAPI) {
 
 			// Remove the turn. pi restores the user's message text to the editor.
 			const userEntry: any = entries[lastUser];
+			let nav: { cancelled: boolean };
 			try {
-				await ctx.navigateTree(userEntry.id);
+				nav = await ctx.navigateTree(userEntry.id);
 			} catch (error) {
 				ctx.ui.notify(
 					`Restored files but could not remove the turn: ${error instanceof Error ? error.message : String(error)}`,
@@ -132,6 +141,13 @@ export default function (pi: ExtensionAPI) {
 				);
 				return;
 			}
+			if (nav?.cancelled) {
+				ctx.ui.notify("Undo cancelled", "warning");
+				return;
+			}
+
+			// Anchor the leaf at the parent so the removal survives reopening the session.
+			pi.appendEntry("undo", { removedUserEntryId: userEntry.id, timestamp: Date.now() });
 
 			const summary: string[] = [];
 			if (restored.size) summary.push(`restored ${restored.size} file${restored.size === 1 ? "" : "s"}`);
