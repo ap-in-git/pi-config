@@ -5,8 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   [branch] main · [folder] ~/.pi · Σ 45.2k · [speed] 12/s · [clock] 1h 23m
- *   $0.123 · $0.456 · $1.234 · ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
+ *   [branch] main · [folder] ~/.pi                    Σ 45.2k · [speed] 12/s · [clock] 1h 23m
+ *   $0.123 · $0.456 · $1.234     ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -892,32 +892,52 @@ export default function (pi: ExtensionAPI) {
 					const branch = footerData.getGitBranch();
 					currentBranch = branch;
 					const tps = cached.sessionTotalTokens / Math.max(1, (Date.now() - sessionStart) / 1000);
-					const row1 = [
-						...(branch ? [{ id: "branch", text: theme.fg("dim", `${"\u{F062C}"} ${branch}`) }] : []),
-						{ id: "cwd", text: theme.fg("dim", `${"\u{F0256}"} ${formatCwd(ctx.cwd)}`) },
-						{ id: "tokens", text: theme.fg("dim", cached.sessionTokens) },
-						{ id: "tps", text: theme.fg("dim", `${"\u{F04C5}"} ${tps.toFixed(1)}/s`) },
-						{ id: "session-time", text: theme.fg("dim", elapsed) },
-					];
-					const row2 = [
-						{ id: "cost-session", text: theme.fg("dim", cached.costSession) },
-						{ id: "cost-today", text: theme.fg("dim", cached.costToday) },
-						{ id: "cost-30d", text: theme.fg("dim", cached.cost30d) },
-						{ id: "context", text: ctxStyled },
-						{ id: "cache", text: theme.fg("dim", cached.chText) },
-						{ id: "peak", text: peakStyled },
-						{ id: "model", text: theme.fg("dim", cached.model) },
-					];
-					if (cached.thinking) row2.push({ id: "thinking", text: theme.fg("dim", cached.thinking) });
+					const dim = (text: string) => theme.fg("dim", text);
 
-					// Two lines: session/cost metrics, then live status.
+					// Line 1: where you are (left) · session activity (right).
+					const r1Left = [
+						...(branch ? [{ id: "branch", text: dim(`${"\u{F062C}"} ${branch}`) }] : []),
+						{ id: "cwd", text: dim(`${"\u{F0256}"} ${formatCwd(ctx.cwd)}`) },
+					];
+					const r1Right = [
+						{ id: "tokens", text: dim(cached.sessionTokens) },
+						{ id: "tps", text: dim(`${"\u{F04C5}"} ${tps.toFixed(1)}/s`) },
+						{ id: "session-time", text: dim(elapsed) },
+					];
+					// Line 2: cost (left) · live status (right).
+					const r2Left = [
+						{ id: "cost-session", text: dim(cached.costSession) },
+						{ id: "cost-today", text: dim(cached.costToday) },
+						{ id: "cost-30d", text: dim(cached.cost30d) },
+					];
+					const r2Right = [
+						{ id: "context", text: ctxStyled },
+						{ id: "cache", text: dim(cached.chText) },
+						{ id: "peak", text: peakStyled },
+						{ id: "model", text: dim(cached.model) },
+					];
+					if (cached.thinking) r2Right.push({ id: "thinking", text: dim(cached.thinking) });
+
 					const lines: string[] = [];
 					const ranges: HitSegment[] = [];
-					for (const [lineIndex, segs] of [row1, row2].entries()) {
-						const text = segs.map((s) => s.text).join(sep);
-						lines.push(truncateToWidth(text, width));
+					const rows = [
+						{ left: r1Left, right: r1Right },
+						{ left: r2Left, right: r2Right },
+					];
+					for (const [lineIndex, row] of rows.entries()) {
+						const leftText = row.left.map((s) => s.text).join(sep);
+						const rightText = row.right.map((s) => s.text).join(sep);
+						const leftWidth = visibleWidth(leftText);
+						const padLen = Math.max(1, width - leftWidth - visibleWidth(rightText));
+						lines.push(truncateToWidth(leftText + " ".repeat(padLen) + rightText, width));
 						let x = 0;
-						for (const s of segs) {
+						for (const s of row.left) {
+							const w = visibleWidth(s.text);
+							if (x < width) ranges.push({ id: s.id, line: lineIndex, start: x, end: Math.min(x + w, width) });
+							x += w + SEP_WIDTH;
+						}
+						x = leftWidth + padLen;
+						for (const s of row.right) {
 							const w = visibleWidth(s.text);
 							if (x < width) ranges.push({ id: s.id, line: lineIndex, start: x, end: Math.min(x + w, width) });
 							x += w + SEP_WIDTH;
