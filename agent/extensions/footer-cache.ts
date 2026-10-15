@@ -23,7 +23,7 @@
  * [clock] = elapsed time since the session started (refreshes every 15s).
  * [branch] = current git branch (omitted outside a repository).
  * [folder] = working directory, with the home directory shown as "~".
- * [speed]  = session throughput in tokens/second.
+ * [speed]  = generated (output) tokens per second of active time.
  *
  * While a turn is running, the working indicator shows a live task timer
  * ("Working · 12s"), updated once a second and reset when the turn ends.
@@ -297,6 +297,7 @@ function contextDisplay(ctx: ExtensionContext): { text: string; level: "error" |
 interface Display {
 	sessionTokens: string;
 	sessionTotalTokens: number;
+	sessionOutputTokens: number;
 	costSession: string;
 	costToday: string;
 	cost30d: string;
@@ -489,6 +490,8 @@ export default function (pi: ExtensionAPI) {
 	let durationTimer: ReturnType<typeof setInterval> | undefined;
 	let taskTimer: ReturnType<typeof setInterval> | undefined;
 	let currentBranch: string | null = null;
+	let activeMs = 0;
+	let turnStartedAt = 0;
 
 	/** Live session cost plus its today/30-day window contributions. */
 	function liveCosts(ctx: ExtensionContext, now: number) {
@@ -523,14 +526,17 @@ export default function (pi: ExtensionAPI) {
 		return { cacheRead, promptTokens: input + cacheRead + cacheWrite };
 	}
 
-	/** Cumulative session tokens plus tokens used in the latest (last user) turn. */
-	function liveTokens(ctx: ExtensionContext): { sessionTotal: number; turnTotal: number } {
+	/** Cumulative session tokens (with output subtotal) plus the latest turn total. */
+	function liveTokens(ctx: ExtensionContext): { sessionTotal: number; outputTotal: number; turnTotal: number } {
 		const entries = ctx.sessionManager.getEntries();
 		let sessionTotal = 0;
+		let outputTotal = 0;
 		let lastUserIndex = -1;
 		for (let i = 0; i < entries.length; i++) {
 			const entry = entries[i];
-			sessionTotal += usageTokens(entryUsage(entry));
+			const usage = entryUsage(entry);
+			sessionTotal += usageTokens(usage);
+			outputTotal += usage?.output ?? 0;
 			if (entry.type === "message" && entry.message.role === "user") lastUserIndex = i;
 		}
 		let turnTotal = 0;
@@ -539,7 +545,7 @@ export default function (pi: ExtensionAPI) {
 				turnTotal += usageTokens(entryUsage(entries[i]));
 			}
 		}
-		return { sessionTotal, turnTotal };
+		return { sessionTotal, outputTotal, turnTotal };
 	}
 
 	function computeDisplay(ctx: ExtensionContext): Display {
@@ -561,13 +567,14 @@ export default function (pi: ExtensionAPI) {
 		const tokens = liveTokens(ctx);
 		const sessionTokens = `Σ ${formatTokens(tokens.sessionTotal)}`;
 		const sessionTotalTokens = tokens.sessionTotal;
+		const sessionOutputTokens = tokens.outputTotal;
 
 		const peakKind = isDeepseekPeak(now) ? "peak" : "off-peak";
 		const peakText = peakKind === "peak" ? "\u{F1213} peak" : "\u{F0533} off-peak";
 		const model = currentModel;
 		const thinking = currentReasoning ? `\u{F09D1} ${currentThinking}` : "";
 
-		return { sessionTokens, sessionTotalTokens, costSession, costToday, cost30d, ctxText: ctxInfo.text, ctxLevel: ctxInfo.level, chText, peakKind, peakText, model, thinking };
+		return { sessionTokens, sessionTotalTokens, sessionOutputTokens, costSession, costToday, cost30d, ctxText: ctxInfo.text, ctxLevel: ctxInfo.level, chText, peakKind, peakText, model, thinking };
 	}
 
 	function refresh(ctx: ExtensionContext): void {
@@ -686,13 +693,15 @@ export default function (pi: ExtensionAPI) {
 					lines: [`Path       ${ctx.cwd}`, `Shortened  ${formatCwd(ctx.cwd)}`],
 				};
 			case "tps": {
-				const seconds = Math.max(1, (Date.now() - sessionStart) / 1000);
+				const activeSeconds = (activeMs + (turnStartedAt ? Date.now() - turnStartedAt : 0)) / 1000;
+				const seconds = activeSeconds > 0 ? activeSeconds : Math.max(1, (Date.now() - sessionStart) / 1000);
 				return {
 					title: "Throughput",
 					lines: [
-						`Tokens/s   ${(tokens.sessionTotal / seconds).toFixed(1)}`,
+						`Output/s   ${(tokens.outputTotal / seconds).toFixed(1)}`,
+						`Output     ${formatTokens(tokens.outputTotal)}`,
 						`Total      ${formatTokens(tokens.sessionTotal)}`,
-						`Elapsed    ${formatElapsed(Date.now() - sessionStart)}`,
+						`Active     ${formatElapsed(seconds * 1000)}`,
 					],
 				};
 			}
@@ -866,6 +875,7 @@ export default function (pi: ExtensionAPI) {
 							cached = {
 								sessionTokens: "Σ 0",
 								sessionTotalTokens: 0,
+								sessionOutputTokens: 0,
 								costSession: "$0.000",
 								costToday: "…",
 								cost30d: "…",
@@ -891,7 +901,9 @@ export default function (pi: ExtensionAPI) {
 					const elapsed = `${"\u{F0150}"} ${formatElapsed(Date.now() - sessionStart)}`;
 					const branch = footerData.getGitBranch();
 					currentBranch = branch;
-					const tps = cached.sessionTotalTokens / Math.max(1, (Date.now() - sessionStart) / 1000);
+					const activeSeconds = (activeMs + (turnStartedAt ? Date.now() - turnStartedAt : 0)) / 1000;
+					const tpsSeconds = activeSeconds > 0 ? activeSeconds : Math.max(1, (Date.now() - sessionStart) / 1000);
+					const tps = cached.sessionOutputTokens / tpsSeconds;
 					const dim = (text: string) => theme.fg("dim", text);
 
 					// Line 1 — identity: project (left) · model (right).
@@ -1003,6 +1015,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Live task timer in the working indicator ("Working · 12s"), from turn_start to agent_end.
 	pi.on("turn_start", (_event, ctx) => {
+		turnStartedAt = Date.now();
 		if (!ctx.hasUI) return;
 		const started = Date.now();
 		const tick = () => ctx.ui.setWorkingMessage(`Working · ${formatElapsed(Date.now() - started)}`);
@@ -1014,6 +1027,10 @@ export default function (pi: ExtensionAPI) {
 	// Usage is finalized when messages and runs end; refresh the footer then.
 	pi.on("message_end", (_event, ctx) => refresh(ctx));
 	pi.on("agent_end", (_event, ctx) => {
+		if (turnStartedAt) {
+			activeMs += Date.now() - turnStartedAt;
+			turnStartedAt = 0;
+		}
 		if (taskTimer) {
 			clearInterval(taskTimer);
 			taskTimer = undefined;
