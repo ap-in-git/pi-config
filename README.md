@@ -10,6 +10,7 @@ Versioned [pi](https://github.com/earendil-works/pi) configuration.
 | `agent/models-store.json` | Model definitions (DeepSeek models) |
 | `agent/trust.json` | Trusted project directories |
 | `agent/extensions/footer-cache.ts` | Custom footer + click-through info overlays |
+| `agent/extensions/undo.ts` | `/undo` command — reverts the last turn's file edits and removes it |
 | `pi-acp/session-map.json` | ACP session map |
 
 ## Not tracked
