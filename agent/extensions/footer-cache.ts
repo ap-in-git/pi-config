@@ -45,8 +45,8 @@
  *
  * After each turn ends, a "token-usage" custom entry is appended to the
  * transcript showing the tokens, cost, API-call count and wall-clock duration
- * of that last user message (rendered via pi.registerEntryRenderer(); not sent
- * to the LLM).
+ * of that last user message, plus the files it changed and their +/- line
+ * counts (rendered via pi.registerEntryRenderer(); not sent to the LLM).
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -55,7 +55,7 @@ import { Box, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-work
 import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -308,6 +308,68 @@ function turnThroughput(ctx: ExtensionContext): { output: number; activeMs: numb
 	return { output, activeMs };
 }
 
+/** Path relative to the session cwd when inside it, else the original path. */
+function shortPath(path: string, cwd: string): string {
+	const rel = relative(cwd, resolve(cwd, path));
+	return rel && !rel.startsWith("..") ? rel : path;
+}
+
+/** Files changed in the latest turn, with added/deleted line counts. */
+function collectFileChanges(ctx: ExtensionContext): FileChange[] {
+	const entries = ctx.sessionManager.getEntries();
+	let lastUser = -1;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry: any = entries[i];
+		if (entry.type === "message" && entry.message?.role === "user") {
+			lastUser = i;
+			break;
+		}
+	}
+	if (lastUser < 0) return [];
+
+	const results = new Map<string, any>();
+	for (let i = lastUser; i < entries.length; i++) {
+		const entry: any = entries[i];
+		if (entry.type === "message" && entry.message?.role === "toolResult") {
+			results.set(entry.message.toolCallId, entry.message);
+		}
+	}
+
+	const changes = new Map<string, FileChange>();
+	for (let i = lastUser; i < entries.length; i++) {
+		const entry: any = entries[i];
+		if (entry.type !== "message" || entry.message?.role !== "assistant") continue;
+		for (const block of entry.message.content ?? []) {
+			if (block?.type !== "toolCall") continue;
+			const path = block.arguments?.path;
+			if (typeof path !== "string" || !path) continue;
+			let added = 0;
+			let deleted = 0;
+			if (block.name === "edit") {
+				const patch = results.get(block.id)?.details?.patch;
+				if (typeof patch === "string") {
+					patch.split("\n").forEach((line: string, index: number) => {
+						if (index < 2 || line.startsWith("@@")) return; // file / hunk header
+						if (line.startsWith("+")) added++;
+						else if (line.startsWith("-")) deleted++;
+					});
+				}
+			} else if (block.name === "write") {
+				const content = typeof block.arguments?.content === "string" ? block.arguments.content : "";
+				added = content ? content.replace(/\n$/, "").split("\n").length : 0;
+			} else {
+				continue;
+			}
+			const key = resolve(ctx.cwd, path);
+			const current = changes.get(key) ?? { path: shortPath(path, ctx.cwd), added: 0, deleted: 0 };
+			current.added += added;
+			current.deleted += deleted;
+			changes.set(key, current);
+		}
+	}
+	return [...changes.values()];
+}
+
 /** Context usage for the footer: value text plus a severity level. */
 function contextDisplay(ctx: ExtensionContext): { text: string; level: "error" | "warning" | "normal" } {
 	const usage = ctx.getContextUsage();
@@ -335,6 +397,12 @@ interface Display {
 	thinking: string;
 }
 
+interface FileChange {
+	path: string;
+	added: number;
+	deleted: number;
+}
+
 interface TurnUsageData {
 	total: number;
 	input: number;
@@ -343,6 +411,7 @@ interface TurnUsageData {
 	cost: number;
 	apiCalls: number;
 	durationMs: number;
+	files?: FileChange[];
 	timestamp: number;
 }
 
@@ -848,13 +917,25 @@ export default function (pi: ExtensionAPI) {
 	// the last user message. Rendered via registerEntryRenderer (not sent to LLM).
 	pi.registerEntryRenderer<TurnUsageData>("token-usage", (entry, _options, theme) => {
 		const data = entry.data;
-		if (!data || data.total <= 0) return undefined;
+		if (!data || (data.total <= 0 && !data.files?.length)) return undefined;
 		const meta = [`${data.apiCalls} call${data.apiCalls === 1 ? "" : "s"}`];
 		if (data.durationMs > 0) meta.push(formatDuration(data.durationMs));
 		const total = theme.fg("accent", `→ ${formatTokens(data.total)} tokens`);
 		const rest = theme.fg("dim", ` · $${data.cost.toFixed(3)} · ${meta.join(" · ")}`);
 		const box = new Box(1, 0, (text) => theme.bg("customMessageBg", text));
 		box.addChild(new Text(`${total}${rest}`, 0, 0));
+		if (data.files && data.files.length > 0) {
+			const added = data.files.reduce((sum, f) => sum + f.added, 0);
+			const deleted = data.files.reduce((sum, f) => sum + f.deleted, 0);
+			const count = `${data.files.length} file${data.files.length === 1 ? "" : "s"}`;
+			box.addChild(new Text(theme.fg("dim", `${"\u{F11E7}"} ${count} changed · +${added} −${deleted}`), 0, 0));
+			for (const file of data.files) {
+				const stat = [file.added ? theme.fg("success", `+${file.added}`) : "", file.deleted ? theme.fg("error", `−${file.deleted}`) : ""]
+					.filter(Boolean)
+					.join(" ");
+				box.addChild(new Text(`  ${file.path}  ${stat}`, 0, 0));
+			}
+		}
 		return box;
 	});
 
@@ -1057,7 +1138,8 @@ export default function (pi: ExtensionAPI) {
 		if (!ctx.hasUI) return;
 		ctx.ui.setWorkingMessage(undefined);
 		const stats = turnStats(ctx);
-		if (stats.total > 0) {
+		const files = collectFileChanges(ctx);
+		if (stats.total > 0 || files.length > 0) {
 			pi.appendEntry<TurnUsageData>("token-usage", {
 				total: stats.total,
 				input: stats.input,
@@ -1066,6 +1148,7 @@ export default function (pi: ExtensionAPI) {
 				cost: stats.cost,
 				apiCalls: stats.apiCalls,
 				durationMs: stats.durationMs,
+				files,
 				timestamp: Date.now(),
 			});
 		}
