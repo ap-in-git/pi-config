@@ -5,8 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   Σ 45.2k · [speed] 54/s · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%     $0.123 · $0.456 · $1.234
- *   [branch] main · [folder] ~/.pi · model · [brain] effort     [chart] peak
+ *   Σ 45.2k · [speed] 54/s · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%     $0.123 · $0.456 · $1.234 · [chart] peak
+ *   [branch] main · [folder] ~/.pi                    model · [brain] effort
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -918,16 +918,16 @@ export default function (pi: ExtensionAPI) {
 						{ id: "cost-session", text: dim(cached.costSession) },
 						{ id: "cost-today", text: dim(cached.costToday) },
 						{ id: "cost-30d", text: dim(cached.cost30d) },
+						{ id: "peak", text: peakStyled },
 					];
 
-					// Line 2 — context info (left) · pricing (right).
+					// Line 2 — context info (left) · model (right).
 					const r2Left = [
 						...(branch ? [{ id: "branch", text: dim(`${"\u{F062C}"} ${branch}`) }] : []),
 						{ id: "cwd", text: dim(`${"\u{F0256}"} ${formatCwd(ctx.cwd)}`) },
-						{ id: "model", text: dim(cached.model) },
 					];
-					if (cached.thinking) r2Left.push({ id: "thinking", text: dim(cached.thinking) });
-					const r2Right = [{ id: "peak", text: peakStyled }];
+					const r2Right = [{ id: "model", text: dim(cached.model) }];
+					if (cached.thinking) r2Right.push({ id: "thinking", text: dim(cached.thinking) });
 
 					const lines: string[] = [];
 					const ranges: HitSegment[] = [];
