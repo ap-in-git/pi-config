@@ -11,7 +11,7 @@ Versioned [pi](https://github.com/earendil-works/pi) configuration.
 | `agent/trust.json` | Trusted project directories |
 | `agent/extensions/footer-cache.ts` | Custom footer + click-through info overlays |
 | `agent/extensions/undo.ts` | `/undo` command — reverts the last turn's file edits and removes it |
-| `agent/extensions/summarize.ts` | `/summarize` command — summarizes the current context |
+| `agent/extensions/summarize.ts` | `/summarize` command — summarizes and compacts the current context |
 | `pi-acp/session-map.json` | ACP session map |
 
 ## Not tracked
