@@ -5,7 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   Σ 45.2k · [clock] 1h 23m · $0.123 · $0.456 · $1.234    ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
+ *   Σ 45.2k · [clock] 1h 23m · $0.123 · $0.456 · $1.234
+ *   ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -60,6 +61,7 @@ const SEP_WIDTH = 3;
 
 interface HitSegment {
 	id: string;
+	line: number;
 	start: number;
 	end: number;
 }
@@ -848,49 +850,41 @@ export default function (pi: ExtensionAPI) {
 						? theme.fg("warning", cached.peakText)
 						: theme.fg("success", cached.peakText);
 					const elapsed = `${"\u{F0150}"} ${formatElapsed(Date.now() - sessionStart)}`;
-					const leftSegs = [
+					const row1 = [
 						{ id: "tokens", text: theme.fg("dim", cached.sessionTokens) },
 						{ id: "session-time", text: theme.fg("dim", elapsed) },
 						{ id: "cost-session", text: theme.fg("dim", cached.costSession) },
 						{ id: "cost-today", text: theme.fg("dim", cached.costToday) },
 						{ id: "cost-30d", text: theme.fg("dim", cached.cost30d) },
 					];
-					const rightSegs = [
+					const row2 = [
 						{ id: "context", text: ctxStyled },
 						{ id: "cache", text: theme.fg("dim", cached.chText) },
 						{ id: "peak", text: peakStyled },
 						{ id: "model", text: theme.fg("dim", cached.model) },
 					];
-					if (cached.thinking) rightSegs.push({ id: "thinking", text: theme.fg("dim", cached.thinking) });
+					if (cached.thinking) row2.push({ id: "thinking", text: theme.fg("dim", cached.thinking) });
 
-					const left = leftSegs.map((s) => s.text).join(sep);
-					const right = rightSegs.map((s) => s.text).join(sep);
-					const leftWidth = visibleWidth(left);
-					const rightWidth = visibleWidth(right);
-					const padLen = Math.max(1, width - leftWidth - rightWidth);
-					const line = truncateToWidth(left + " ".repeat(padLen) + right, width);
-
-					// Record column ranges so handleMouse can tell which segment was clicked.
+					// Two lines: session/cost metrics, then live status.
+					const lines: string[] = [];
 					const ranges: HitSegment[] = [];
-					let x = 0;
-					for (const s of leftSegs) {
-						const w = visibleWidth(s.text);
-						ranges.push({ id: s.id, start: x, end: x + w });
-						x += w + SEP_WIDTH;
-					}
-					x = leftWidth + padLen;
-					for (const s of rightSegs) {
-						const w = visibleWidth(s.text);
-						if (x < width) ranges.push({ id: s.id, start: x, end: Math.min(x + w, width) });
-						x += w + SEP_WIDTH;
+					for (const [lineIndex, segs] of [row1, row2].entries()) {
+						const text = segs.map((s) => s.text).join(sep);
+						lines.push(truncateToWidth(text, width));
+						let x = 0;
+						for (const s of segs) {
+							const w = visibleWidth(s.text);
+							if (x < width) ranges.push({ id: s.id, line: lineIndex, start: x, end: Math.min(x + w, width) });
+							x += w + SEP_WIDTH;
+						}
 					}
 					hitSegments = ranges;
 
-					return [line];
+					return lines;
 				},
 				handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
 					if (event.type !== "click" || event.button !== "left") return undefined;
-					const hit = hitSegments.find((s) => event.x >= s.start && event.x < s.end);
+					const hit = hitSegments.find((s) => s.line === event.y && event.x >= s.start && event.x < s.end);
 					if (!hit) return undefined;
 					void showInfo(hit.id, ctx);
 					return { handled: true };
