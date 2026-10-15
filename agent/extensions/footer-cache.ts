@@ -1038,9 +1038,12 @@ export default function (pi: ExtensionAPI) {
 					currentBranch = branch;
 					const tps = cached.throughput;
 					const dim = (text: string) => theme.fg("dim", text);
+					// Extension statuses (set via ctx.ui.setStatus) — e.g. plan mode.
+					const planStatus = footerData.getExtensionStatuses().get("plan-mode");
 
 					// Line 1 — context info (left) · pricing (right).
 					const r1Left = [
+						...(planStatus ? [{ id: "plan", text: planStatus }] : []),
 						{ id: "tokens", text: dim(cached.sessionTokens) },
 						{ id: "session-time", text: dim(elapsed) },
 						{ id: "context", text: ctxStyled },
