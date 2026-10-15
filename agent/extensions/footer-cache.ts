@@ -51,7 +51,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
-import { Box, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Box, MouseRegion, Spacer, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -932,6 +932,10 @@ export default function (pi: ExtensionAPI) {
 		const rest = theme.fg("dim", ` · $${data.cost.toFixed(3)} · ${meta.join(" · ")}`);
 		const box = new Box(1, 0, (text) => theme.bg("customMessageBg", text));
 		box.addChild(new Text(`${total}${rest}`, 0, 0));
+		// One Text per file so a single line can be underlined on hover. Row 0 is
+		// the totals line and row 1 is the header line, so file i is at row i + 2.
+		const FILE_ROW_OFFSET = 2;
+		const fileRows: { text: Text; plain: string }[] = [];
 		if (data.files && data.files.length > 0) {
 			const added = data.files.reduce((sum, f) => sum + f.added, 0);
 			const deleted = data.files.reduce((sum, f) => sum + f.deleted, 0);
@@ -941,10 +945,25 @@ export default function (pi: ExtensionAPI) {
 				const stat = [file.added ? theme.fg("success", `+${file.added}`) : "", file.deleted ? theme.fg("error", `−${file.deleted}`) : ""]
 					.filter(Boolean)
 					.join(" ");
-				box.addChild(new Text(`  ${file.path}  ${stat}`, 0, 0));
+				const line = `  ${file.path}  ${stat}`;
+				const text = new Text(line, 0, 0);
+				fileRows.push({ text, plain: line });
+				box.addChild(text);
 			}
 		}
-		return box;
+		if (fileRows.length === 0) return box;
+
+		// Underline the file line under the pointer, like hovering a link.
+		let hovered = -1;
+		return new MouseRegion(box, (event) => {
+			if (event.type !== "move") return undefined;
+			const index = event.y - FILE_ROW_OFFSET;
+			const next = index >= 0 && index < fileRows.length ? index : -1;
+			if (next === hovered) return undefined;
+			hovered = next;
+			fileRows.forEach((row, i) => row.text.setText(i === hovered ? theme.underline(row.plain) : row.plain));
+			return { handled: true, render: true };
+		});
 	});
 
 	pi.on("session_start", (_event, ctx) => {
