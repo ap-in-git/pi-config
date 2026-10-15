@@ -19,6 +19,7 @@ Versioned [pi](https://github.com/earendil-works/pi) configuration.
 
 - `agent/auth.json` — **API keys (secret)**
 - `agent/sessions/` — conversation history
+- `agent/plans/` — per-plan markdown files
 - `agent/install/`, `agent/bin/` — the pi installation itself
 
 ## Notes
@@ -40,3 +41,8 @@ via `setStatus()` (e.g. the plan-mode indicator) are shown at the start of line 
 `bash` is limited to an allowlist of read-only commands, and the agent is told to
 output a numbered `Plan:`. After it proposes a plan you can execute it (full
 access restored, progress tracked in a widget), refine it, or stay in plan mode.
+
+Each plan is saved as its own file under `~/.pi/agent/plans/<timestamp>-<slug>.md`,
+so a single session can hold many plans. The file contains the steps as a
+markdown checklist (checked off during execution) plus the full plan text.
+`/planfile` prints the current file and `/plans` lists the session's plans.
