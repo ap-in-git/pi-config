@@ -5,8 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   Σ 45.2k · [speed] 54/s · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%     $0.123 · $0.456 · $1.234 · [chart] peak
- *   [branch] main · [folder] ~/.pi                    model · [brain] effort
+ *   Σ 45.2k · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%     $0.123 · $0.456 · $1.234 · [chart] peak
+ *   [branch] main · [folder] ~/.pi                    model · [brain] effort · [speed] 54/s
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -909,7 +909,6 @@ export default function (pi: ExtensionAPI) {
 					// Line 1 — context info (left) · pricing (right).
 					const r1Left = [
 						{ id: "tokens", text: dim(cached.sessionTokens) },
-						{ id: "tps", text: dim(`${"\u{F04C5}"} ${tps.toFixed(1)}/s`) },
 						{ id: "session-time", text: dim(elapsed) },
 						{ id: "context", text: ctxStyled },
 						{ id: "cache", text: dim(cached.chText) },
@@ -928,6 +927,7 @@ export default function (pi: ExtensionAPI) {
 					];
 					const r2Right = [{ id: "model", text: dim(cached.model) }];
 					if (cached.thinking) r2Right.push({ id: "thinking", text: dim(cached.thinking) });
+					r2Right.push({ id: "tps", text: dim(`${"\u{F04C5}"} ${tps.toFixed(1)}/s`) });
 
 					const lines: string[] = [];
 					const ranges: HitSegment[] = [];
