@@ -5,8 +5,8 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   $0.123 · $0.456 · $1.234     Σ 45.2k · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%
- *   [branch] main · [folder] ~/.pi                    model · [brain] effort · [speed] 54/s · [chart] peak
+ *   Σ 45.2k · [speed] 54/s · [clock] 1h 23m · ◧ 6.2% · ↺ 87.3%     $0.123 · $0.456 · $1.234
+ *   [branch] main · [folder] ~/.pi · model · [brain] effort     [chart] peak
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -906,28 +906,28 @@ export default function (pi: ExtensionAPI) {
 					const tps = cached.sessionOutputTokens / tpsSeconds;
 					const dim = (text: string) => theme.fg("dim", text);
 
-					// Line 1 — fast-changing: pricing (left) · live usage (right).
+					// Line 1 — context info (left) · pricing (right).
 					const r1Left = [
-						{ id: "cost-session", text: dim(cached.costSession) },
-						{ id: "cost-today", text: dim(cached.costToday) },
-						{ id: "cost-30d", text: dim(cached.cost30d) },
-					];
-					const r1Right = [
 						{ id: "tokens", text: dim(cached.sessionTokens) },
+						{ id: "tps", text: dim(`${"\u{F04C5}"} ${tps.toFixed(1)}/s`) },
 						{ id: "session-time", text: dim(elapsed) },
 						{ id: "context", text: ctxStyled },
 						{ id: "cache", text: dim(cached.chText) },
 					];
+					const r1Right = [
+						{ id: "cost-session", text: dim(cached.costSession) },
+						{ id: "cost-today", text: dim(cached.costToday) },
+						{ id: "cost-30d", text: dim(cached.cost30d) },
+					];
 
-					// Line 2 — slow-changing: project (left) · model (right).
+					// Line 2 — context info (left) · pricing (right).
 					const r2Left = [
 						...(branch ? [{ id: "branch", text: dim(`${"\u{F062C}"} ${branch}`) }] : []),
 						{ id: "cwd", text: dim(`${"\u{F0256}"} ${formatCwd(ctx.cwd)}`) },
+						{ id: "model", text: dim(cached.model) },
 					];
-					const r2Right = [{ id: "model", text: dim(cached.model) }];
-					if (cached.thinking) r2Right.push({ id: "thinking", text: dim(cached.thinking) });
-					r2Right.push({ id: "tps", text: dim(`${"\u{F04C5}"} ${tps.toFixed(1)}/s`) });
-					r2Right.push({ id: "peak", text: peakStyled });
+					if (cached.thinking) r2Left.push({ id: "thinking", text: dim(cached.thinking) });
+					const r2Right = [{ id: "peak", text: peakStyled }];
 
 					const lines: string[] = [];
 					const ranges: HitSegment[] = [];
