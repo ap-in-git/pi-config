@@ -248,6 +248,7 @@ interface TurnStats {
 	cacheRead: number;
 	cost: number;
 	apiCalls: number;
+	toolCalls: number;
 	durationMs: number;
 }
 
@@ -262,7 +263,7 @@ function turnStats(ctx: ExtensionContext): TurnStats {
 			break;
 		}
 	}
-	const stats: TurnStats = { total: 0, input: 0, output: 0, cacheRead: 0, cost: 0, apiCalls: 0, durationMs: 0 };
+	const stats: TurnStats = { total: 0, input: 0, output: 0, cacheRead: 0, cost: 0, apiCalls: 0, toolCalls: 0, durationMs: 0 };
 	if (lastUserIndex < 0) return stats;
 	const startMs = entryTime(entries[lastUserIndex]);
 	let endMs = 0;
@@ -275,6 +276,11 @@ function turnStats(ctx: ExtensionContext): TurnStats {
 			stats.cacheRead += usage.cacheRead ?? 0;
 			stats.total += usageTokens(usage);
 			stats.apiCalls += 1;
+		}
+		if (entry.type === "message" && entry.message.role === "assistant") {
+			for (const block of entry.message.content ?? []) {
+				if (block?.type === "toolCall") stats.toolCalls += 1;
+			}
 		}
 		stats.cost += entryCost(entry);
 		const t = entryTime(entry);
@@ -410,6 +416,7 @@ interface TurnUsageData {
 	cacheRead: number;
 	cost: number;
 	apiCalls: number;
+	toolCalls: number;
 	durationMs: number;
 	files?: FileChange[];
 	timestamp: number;
@@ -919,6 +926,7 @@ export default function (pi: ExtensionAPI) {
 		const data = entry.data;
 		if (!data || (data.total <= 0 && !data.files?.length)) return undefined;
 		const meta = [`${data.apiCalls} call${data.apiCalls === 1 ? "" : "s"}`];
+		if (data.toolCalls > 0) meta.push(`${data.toolCalls} tool${data.toolCalls === 1 ? "" : "s"}`);
 		if (data.durationMs > 0) meta.push(formatDuration(data.durationMs));
 		const total = theme.fg("accent", `→ ${formatTokens(data.total)} tokens`);
 		const rest = theme.fg("dim", ` · $${data.cost.toFixed(3)} · ${meta.join(" · ")}`);
@@ -1147,6 +1155,7 @@ export default function (pi: ExtensionAPI) {
 				cacheRead: stats.cacheRead,
 				cost: stats.cost,
 				apiCalls: stats.apiCalls,
+				toolCalls: stats.toolCalls,
 				durationMs: stats.durationMs,
 				files,
 				timestamp: Date.now(),
