@@ -20,6 +20,9 @@
  *
  * Σ = total tokens used across the whole session (left side, before cost).
  * [clock] = elapsed time since the session started (refreshes every 15s).
+ *
+ * While a turn is running, the working indicator shows a live task timer
+ * ("Working · 12s"), updated once a second and reset when the turn ends.
  * ◧ = context usage (percent of the model's context window; "?" until pi
  *     estimates it). Turns warning/error-colored as it fills up.
  * ↺ = prompt-cache hit percentage: cache reads as a share of all prompt
@@ -469,6 +472,7 @@ export default function (pi: ExtensionAPI) {
 	let infoOpen = false;
 	let sessionStart = 0;
 	let durationTimer: ReturnType<typeof setInterval> | undefined;
+	let taskTimer: ReturnType<typeof setInterval> | undefined;
 
 	/** Live session cost plus its today/30-day window contributions. */
 	function liveCosts(ctx: ExtensionContext, now: number) {
@@ -939,10 +943,25 @@ export default function (pi: ExtensionAPI) {
 		refresh(ctx);
 	});
 
+	// Live task timer in the working indicator ("Working · 12s"), from turn_start to agent_end.
+	pi.on("turn_start", (_event, ctx) => {
+		if (!ctx.hasUI) return;
+		const started = Date.now();
+		const tick = () => ctx.ui.setWorkingMessage(`Working · ${formatElapsed(Date.now() - started)}`);
+		tick();
+		if (taskTimer) clearInterval(taskTimer);
+		taskTimer = setInterval(tick, 1000);
+	});
+
 	// Usage is finalized when messages and runs end; refresh the footer then.
 	pi.on("message_end", (_event, ctx) => refresh(ctx));
 	pi.on("agent_end", (_event, ctx) => {
+		if (taskTimer) {
+			clearInterval(taskTimer);
+			taskTimer = undefined;
+		}
 		if (!ctx.hasUI) return;
+		ctx.ui.setWorkingMessage(undefined);
 		const stats = turnStats(ctx);
 		if (stats.total > 0) {
 			pi.appendEntry<TurnUsageData>("token-usage", {
@@ -959,9 +978,11 @@ export default function (pi: ExtensionAPI) {
 		refresh(ctx);
 	});
 
-	// Stop the elapsed-time ticker when the session ends.
+	// Stop the elapsed-time tickers when the session ends.
 	pi.on("session_shutdown", () => {
 		if (durationTimer) clearInterval(durationTimer);
+		if (taskTimer) clearInterval(taskTimer);
 		durationTimer = undefined;
+		taskTimer = undefined;
 	});
 }
