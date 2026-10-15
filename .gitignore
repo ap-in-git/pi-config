@@ -1,0 +1,10 @@
+# Secrets — never commit
+agent/auth.json
+
+# Runtime data / large, machine-specific
+agent/sessions/
+agent/install/
+agent/bin/
+
+# macOS
+.DS_Store
