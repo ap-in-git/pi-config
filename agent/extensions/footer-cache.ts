@@ -935,7 +935,7 @@ export default function (pi: ExtensionAPI) {
 		// One Text per file so a single line can be underlined on hover. Row 0 is
 		// the totals line and row 1 is the header line, so file i is at row i + 2.
 		const FILE_ROW_OFFSET = 2;
-		const fileRows: { text: Text; plain: string }[] = [];
+		const fileRows: { text: Text; path: string; stat: string }[] = [];
 		if (data.files && data.files.length > 0) {
 			const added = data.files.reduce((sum, f) => sum + f.added, 0);
 			const deleted = data.files.reduce((sum, f) => sum + f.deleted, 0);
@@ -945,9 +945,8 @@ export default function (pi: ExtensionAPI) {
 				const stat = [file.added ? theme.fg("success", `+${file.added}`) : "", file.deleted ? theme.fg("error", `−${file.deleted}`) : ""]
 					.filter(Boolean)
 					.join(" ");
-				const line = `  ${file.path}  ${stat}`;
-				const text = new Text(line, 0, 0);
-				fileRows.push({ text, plain: line });
+				const text = new Text(`  ${file.path}  ${stat}`, 0, 0);
+				fileRows.push({ text, path: file.path, stat });
 				box.addChild(text);
 			}
 		}
@@ -961,7 +960,9 @@ export default function (pi: ExtensionAPI) {
 			const next = index >= 0 && index < fileRows.length ? index : -1;
 			if (next === hovered) return undefined;
 			hovered = next;
-			fileRows.forEach((row, i) => row.text.setText(i === hovered ? theme.underline(row.plain) : row.plain));
+			fileRows.forEach((row, i) =>
+				row.text.setText(`  ${i === hovered ? theme.underline(row.path) : row.path}  ${row.stat}`),
+			);
 			return { handled: true, render: true };
 		});
 	});
