@@ -5,7 +5,7 @@
  *
  * Replaces pi's built-in footer with a single line:
  *
- *   Σ 45.2k · $0.123 | $0.456 | $1.234    ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
+ *   Σ 45.2k · [clock] 1h 23m · $0.123 · $0.456 · $1.234    ◧ 6.2% · ↺ 87.3% · [chart] peak · model · [brain] effort
  *
  * Cost values:
  * - first value: cost recorded in the current session file (all entries).
@@ -19,6 +19,7 @@
  * the numbers update as the session grows.
  *
  * Σ = total tokens used across the whole session (left side, before cost).
+ * [clock] = elapsed time since the session started (refreshes every 15s).
  * ◧ = context usage (percent of the model's context window; "?" until pi
  *     estimates it). Turns warning/error-colored as it fills up.
  * ↺ = prompt-cache hit percentage: cache reads as a share of all prompt
@@ -213,6 +214,17 @@ function formatDuration(ms: number): string {
 	const minutes = Math.floor(seconds / 60);
 	const rest = Math.round(seconds % 60);
 	return `${minutes}m ${rest}s`;
+}
+
+/** Human-readable elapsed time for the footer ("1h 23m", "23m 5s", "45s"). */
+function formatElapsed(ms: number): string {
+	const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+	const hours = Math.floor(totalSeconds / 3600);
+	const minutes = Math.floor((totalSeconds % 3600) / 60);
+	const seconds = totalSeconds % 60;
+	if (hours > 0) return `${hours}h ${minutes}m`;
+	if (minutes > 0) return `${minutes}m ${seconds}s`;
+	return `${seconds}s`;
 }
 
 /** Total billed tokens in a usage payload (input + output + cache reads/writes). */
@@ -455,6 +467,8 @@ export default function (pi: ExtensionAPI) {
 	let currentReasoning = false;
 	let hitSegments: HitSegment[] = [];
 	let infoOpen = false;
+	let sessionStart = 0;
+	let durationTimer: ReturnType<typeof setInterval> | undefined;
 
 	/** Live session cost plus its today/30-day window contributions. */
 	function liveCosts(ctx: ExtensionContext, now: number) {
@@ -630,6 +644,16 @@ export default function (pi: ExtensionAPI) {
 						`Cost       $${costs.session.toFixed(3)}`,
 					],
 				};
+			case "session-time": {
+				const started = new Date(sessionStart);
+				return {
+					title: "Session time",
+					lines: [
+						`Elapsed    ${formatElapsed(Date.now() - sessionStart)}`,
+						`Started    ${started.toLocaleString()}`,
+					],
+				};
+			}
 			case "cost-session":
 				return {
 					title: "Cost",
@@ -770,6 +794,11 @@ export default function (pi: ExtensionAPI) {
 		currentThinking = ctx.thinkingLevel ?? "off";
 		currentReasoning = ctx.model?.reasoning ?? false;
 
+		const header = ctx.sessionManager.getHeader();
+		sessionStart = header ? Date.parse(header.timestamp) : Date.now();
+		if (durationTimer) clearInterval(durationTimer);
+		durationTimer = setInterval(() => activeTui?.requestRender(), 15_000);
+
 		ctx.ui.setFooter((tui, theme) => {
 			activeTui = tui;
 			let cached: Display | undefined;
@@ -814,8 +843,10 @@ export default function (pi: ExtensionAPI) {
 					const peakStyled = cached.peakKind === "peak"
 						? theme.fg("warning", cached.peakText)
 						: theme.fg("success", cached.peakText);
+					const elapsed = `${"\u{F0150}"} ${formatElapsed(Date.now() - sessionStart)}`;
 					const leftSegs = [
 						{ id: "tokens", text: theme.fg("dim", cached.sessionTokens) },
+						{ id: "session-time", text: theme.fg("dim", elapsed) },
 						{ id: "cost-session", text: theme.fg("dim", cached.costSession) },
 						{ id: "cost-today", text: theme.fg("dim", cached.costToday) },
 						{ id: "cost-30d", text: theme.fg("dim", cached.cost30d) },
@@ -926,5 +957,11 @@ export default function (pi: ExtensionAPI) {
 			});
 		}
 		refresh(ctx);
+	});
+
+	// Stop the elapsed-time ticker when the session ends.
+	pi.on("session_shutdown", () => {
+		if (durationTimer) clearInterval(durationTimer);
+		durationTimer = undefined;
 	});
 }
