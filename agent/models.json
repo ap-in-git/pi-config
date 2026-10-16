@@ -1,0 +1,20 @@
+{
+  "providers": {
+    "deepseek": {
+      "modelOverrides": {
+        "deepseek-flash": {
+          "inputLimits": {
+            "images": {
+              "resize": {
+                "maxWidth": 768,
+                "maxHeight": 1365,
+                "maxBytes": 262144,
+                "jpegQuality": 70
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

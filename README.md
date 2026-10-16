@@ -13,6 +13,9 @@ Versioned [pi](https://github.com/earendil-works/pi) configuration.
 | `agent/extensions/undo.ts` | `/undo` command — reverts the last turn's file edits and removes it |
 | `agent/extensions/summarize.ts` | `/summarize` command — summarizes and compacts the current context |
 | `agent/extensions/plan-mode/` | `/plan` + `/todos` — read-only research/plan mode before editing |
+| `agent/extensions/subagent/` | `/subagent` + `/subagent_check` tools — dispatch agents to background Herdr panes |
+| `agent/agents/` | Subagent definitions, advertised in the system prompt as a `<subagents>` section |
+| `agent/prompts/` | Prompt templates (`/implement`, `/scout-and-plan`, `/implement-and-review`) |
 | `pi-acp/session-map.json` | ACP session map |
 
 ## Not tracked
@@ -46,3 +49,17 @@ Each plan is saved as its own file under `~/.pi/agent/plans/<timestamp>-<slug>.m
 so a single session can hold many plans. The file contains the steps as a
 markdown checklist (checked off during execution) plus the full plan text.
 `/planfile` prints the current file and `/plans` lists the session's plans.
+
+## Subagents
+
+The `subagent` extension advertises every agent under `agent/agents/` in the
+system prompt as a `<subagents>` section, mirroring the `<skills>` section.
+Each entry lists the agent's name, description, model, tools, and source file
+so the model can pick the right one without re-discovering them at dispatch time.
+
+| Agent | Role | Model |
+|---|---|---|
+| `scout` | Fast codebase recon, returns compressed context | `claude-haiku-4-5` |
+| `planner` | Turns context + requirements into an implementation plan | `claude-sonnet-4-5` |
+| `worker` | General-purpose, isolated context | `claude-sonnet-4-5` |
+| `reviewer` | Code review: quality, security, maintainability | `claude-sonnet-4-5` |

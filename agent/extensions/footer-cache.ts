@@ -468,6 +468,7 @@ interface FileStats {
 	firstUser: string;
 	startedAt: number;
 	today: number;
+	todayFirst: number;
 	byDay: Map<string, number>;
 }
 
@@ -480,6 +481,7 @@ async function scanFileStats(path: string, now: number): Promise<FileStats> {
 	let firstUser = "";
 	let startedAt = 0;
 	let today = 0;
+	let todayFirst = 0;
 	try {
 		const text = await readFile(path, "utf8");
 		for (const line of text.split("\n")) {
@@ -503,9 +505,10 @@ async function scanFileStats(path: string, now: number): Promise<FileStats> {
 			if (!firstUser && entry.type === "message" && entry.message?.role === "user") {
 				firstUser = messageText(entry.message);
 			}
+			const time = entryTime(entry);
+			if (time && time >= todayStart && (todayFirst === 0 || time < todayFirst)) todayFirst = time;
 			const cost = entryCost(entry);
 			if (!cost) continue;
-			const time = entryTime(entry);
 			if (!time) continue;
 			if (time >= todayStart) today += cost;
 			const key = localDayKey(time);
@@ -514,7 +517,7 @@ async function scanFileStats(path: string, now: number): Promise<FileStats> {
 	} catch {
 		// Unreadable file: contributes nothing.
 	}
-	return { cwd, name, firstUser, startedAt, today, byDay };
+	return { cwd, name, firstUser, startedAt, today, todayFirst, byDay };
 }
 
 /** Plain text of a message's content (string or content blocks). */
@@ -536,7 +539,11 @@ function messageText(message: any): string {
 function sessionLabel(stats: FileStats): string {
 	if (stats.name) return stats.name;
 	const base = stats.firstUser || cwdLabel(stats.cwd);
-	const clock = stats.startedAt ? new Date(stats.startedAt).toTimeString().slice(0, 5) : "";
+	// A session that started on an earlier day can still have cost today. Show
+	// its first activity today (not its original start) so the clock in the
+	// "Today · cost by session" view doesn't look like another day.
+	const clockMs = stats.todayFirst || stats.startedAt;
+	const clock = clockMs ? new Date(clockMs).toTimeString().slice(0, 5) : "";
 	const short = base.length > 22 ? base.slice(0, 22) : base;
 	return clock ? `${short} · ${clock}` : short;
 }
@@ -580,6 +587,7 @@ export default function (pi: ExtensionAPI) {
 	let scanGeneration = 0; // invalidates background scans after a session switch
 	let activeTui: { requestRender(): void } | null = null;
 	let invalidateCurrent: (() => void) | null = null;
+	let lastPeak: boolean | null = null; // last rendered DeepSeek peak/off-peak window
 	let currentModel = "no-model";
 	let currentProvider = "";
 	let currentContextWindow = 0;
@@ -670,7 +678,9 @@ export default function (pi: ExtensionAPI) {
 		const tput = turnThroughput(ctx);
 		const throughput = tput.activeMs > 0 ? tput.output / (tput.activeMs / 1000) : 0;
 
-		const peakKind = isDeepseekPeak(now) ? "peak" : "off-peak";
+		const peak = isDeepseekPeak(now);
+		lastPeak = peak;
+		const peakKind = peak ? "peak" : "off-peak";
 		const peakText = peakKind === "peak" ? "\u{F1213} peak" : "\u{F0533} off-peak";
 		const model = currentModel;
 		const thinking = currentReasoning ? `\u{F09D1} ${currentThinking}` : "";
@@ -982,7 +992,13 @@ export default function (pi: ExtensionAPI) {
 		const header = ctx.sessionManager.getHeader();
 		sessionStart = header ? Date.parse(header.timestamp) : Date.now();
 		if (durationTimer) clearInterval(durationTimer);
-		durationTimer = setInterval(() => activeTui?.requestRender(), 15_000);
+		// Redraw the elapsed clock every 15s. DeepSeek's peak/off-peak window is
+		// time-of-day based, so invalidate the cached display when the window
+		// flips; the next render then recomputes the badge (and costs).
+		durationTimer = setInterval(() => {
+			if (isDeepseekPeak(Date.now()) !== lastPeak) invalidateCurrent?.();
+			activeTui?.requestRender();
+		}, 15_000);
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			activeTui = tui;
